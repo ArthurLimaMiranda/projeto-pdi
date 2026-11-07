@@ -49,6 +49,13 @@ class MediaFileSourceTest(unittest.TestCase):
 
             self.assertIsNotNone(frame)
             self.assertEqual(frame.shape, (24, 32, 3))
+            self.assertTrue(source.get_status()["seekable"])
+            self.assertAlmostEqual(source.get_status()["duration_sec"], 0.3, places=2)
+            self.assertTrue(source.set_paused(True))
+            self.assertTrue(source.seek(0.2))
+            self.assertTrue(source.get_status()["paused"])
+            self.assertAlmostEqual(source.get_status()["position_sec"], 0.2, places=2)
+            self.assertGreater(source.read_frame().mean(), 130)
             source.release()
 
     def test_missing_source_is_rejected(self):

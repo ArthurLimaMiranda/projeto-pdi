@@ -44,6 +44,22 @@ PDI_MEDIA_SOURCE=./examples/media/meu_video.mp4 \
 python pc_app/main.py
 ```
 
+Com o vídeo da ESP32-CAM que acompanha a pasta `PDI`:
+
+```bash
+PDI_MODE=video \
+PDI_MEDIA_SOURCE=../esp32cam_20260929_152353_402770.mp4 \
+python pc_app/main.py
+```
+
+Para experimentar as três interferências já recortadas da gravação de tela:
+
+```bash
+PDI_MODE=video \
+PDI_MEDIA_SOURCE=../video_com_ruidos_recortado_320x240.mp4 \
+python pc_app/main.py
+```
+
 Também pode ser usada uma imagem:
 
 ```bash
@@ -204,15 +220,48 @@ pip install -r requirements.txt
 
 ## controles
 
+O processamento é controlado **com o mouse** na própria janela. A primeira
+linha escolhe o realce ou análise da cena (`Sem realce`, `Baixa luz`,
+`Contraste local`, `Marcadores`);
+a segunda escolhe o filtro de ruído (`Sem filtro`, `Sal e pimenta`, `Listras`, `Estático`).
+As duas escolhas são independentes. Clique ou arraste os controles deslizantes
+para ajustar a linha selecionada por último. **Restaurar padrão** redefine
+somente essa opção. **Espelhar** corrige a orientação da imagem processada.
+A imagem original permanece à esquerda para comparação.
+
+Na estação dos marcadores, clique em **Marcadores** e arraste um retângulo na
+imagem original sobre a parede. A imagem à direita vira uma máscara simples:
+**fundo preto e bordas brancas**. Ajuste `sensibilidade` e `fragmento mínimo`
+para destacar os contornos dos corpos e reduzir pontos isolados. Para registrar
+a quantidade, clique uma vez em cada objeto da máscara; um ponto verde marca
+cada seleção e **Quantidade marcada** mostra o total. Clique novamente no
+mesmo ponto para desfazer. Essa contagem é confirmada pelo operador.
+**Restaurar padrão** restaura a ROI, os parâmetros e a contagem.
+Se houver ruído, selecione o filtro na segunda linha, independentemente da
+análise dos marcadores.
+
+No modo `video`, a barra de tempo permite clicar ou arrastar para outro ponto
+do vídeo. O botão **Pausar/Reproduzir** mantém um frame na tela enquanto o
+operador testa os filtros. A barra não aparece para imagens estáticas, câmera
+ao vivo ou gateway.
+
+As teclas abaixo continuam disponíveis como atalhos e para dirigir o robô.
+
 | tecla | ação |
 |---|---|
 | `W`, `A`, `S`, `D` ou setas | movimentação manual quando há robô |
 | `Espaço` | parada imediata |
 | `+` / `-` | aumenta ou diminui a velocidade |
 | `L` | liga ou desliga o flash |
+| `0` a `3` | escolhe o realce ou análise da cena |
+| `Q` / `E` | diminui / aumenta o primeiro parâmetro da linha em ajuste |
+| `Z` / `C` | diminui / aumenta o segundo parâmetro da linha em ajuste |
+| `M` | espelha horizontalmente a imagem processada para ler inscrições |
 | `Esc` | encerra o console |
 
 No modo `video`, os controles de movimento não enviam nada para hardware.
+
+Consulte [as técnicas, parâmetros e limites](docs/processing_modes.md).
 
 ## configuração
 

@@ -33,10 +33,18 @@ from config import (
     WINDOW_W,
 )
 from gateway_client import GatewayRobotClient
-from image_processing import process_frame
+from image_processing import (
+    MODE_NAMES,
+    MODES,
+    NOISE_NAMES,
+    ProcessingSettings,
+    process_frame,
+)
 from media_source import MediaFileSource
 from null_robot_client import NullRobotClient
+from pdi_controls import PDIControls
 from robot_client import RobotClient
+from video_timeline import VideoTimeline
 
 
 logger = logging.getLogger(__name__)
@@ -60,6 +68,29 @@ def configure_logging():
 
 def draw_text(screen, text, x, y, font, color=(235, 235, 235)):
     screen.blit(font.render(str(text), True, color), (x, y))
+
+
+def draw_frame_panel(screen, frame, rect, title, font, small_font, empty_text):
+    """Mostra um frame sem deformar sua proporção, com área reservada fixa."""
+    pygame.draw.rect(screen, (27, 31, 36), rect)
+    pygame.draw.rect(screen, (69, 78, 88), rect, 1)
+    draw_text(screen, title, rect.x + 12, rect.y + 10, font)
+    image_area = rect.inflate(-16, -56)
+    image_area.y += 18
+    if frame is None:
+        draw_text(screen, empty_text, image_area.x + 16, image_area.centery, small_font, (255, 205, 120))
+        return None
+
+    height, width = frame.shape[:2]
+    scale = min(image_area.width / width, image_area.height / height)
+    size = (max(1, int(width * scale)), max(1, int(height * scale)))
+    surface = CameraViewer.frame_to_surface(frame, target_size=size)
+    if surface is not None:
+        x = image_area.x + (image_area.width - size[0]) // 2
+        y = image_area.y + (image_area.height - size[1]) // 2
+        screen.blit(surface, (x, y))
+        return pygame.Rect(x, y, *size)
+    return None
 
 
 def get_manual_command(keys):
@@ -158,6 +189,12 @@ def main():
     processing_error = None
     processing_ms = 0.0
     last_processing_log = 0.0
+    processing_settings = ProcessingSettings()
+    pdi_controls = PDIControls()
+    video_timeline = VideoTimeline() if RUN_MODE == "video" else None
+    mode_keys = {pygame.K_0 + index: mode for index, mode in enumerate(MODES)}
+    original_image_rect = None
+    processed_image_rect = None
 
     robot.set_speed(speed)
     robot.set_flash(FLASH_OFF_VALUE)
@@ -171,11 +208,35 @@ def main():
                 if event.type == pygame.QUIT:
                     running = False
                     continue
+                if video_timeline and video_timeline.handle_event(event, source):
+                    continue
+                if pdi_controls.handle_event(event, processing_settings,
+                                             original_image_rect, processed_image_rect):
+                    if event.type in (pygame.MOUSEBUTTONDOWN, pygame.MOUSEBUTTONUP):
+                        logger.info("PDI: %s + %s; ajustando %s: %s; espelhar: %s",
+                                    MODE_NAMES[processing_settings.mode],
+                                    NOISE_NAMES[processing_settings.noise_mode],
+                                    processing_settings.focus,
+                                    processing_settings.parameter_labels(),
+                                    processing_settings.mirror)
+                    continue
                 if event.type != pygame.KEYDOWN:
                     continue
 
                 if event.key == pygame.K_ESCAPE:
                     running = False
+                elif event.key in mode_keys:
+                    processing_settings.mode = mode_keys[event.key]
+                    processing_settings.focus = "base"
+                    logger.info("PDI: %s", MODE_NAMES[processing_settings.mode])
+                elif event.key == pygame.K_m:
+                    processing_settings.mirror = not processing_settings.mirror
+                    logger.info("espelhamento: %s", processing_settings.mirror)
+                elif event.key in (pygame.K_q, pygame.K_e, pygame.K_z, pygame.K_c):
+                    parameter = 1 if event.key in (pygame.K_q, pygame.K_e) else 2
+                    direction = -1 if event.key in (pygame.K_q, pygame.K_z) else 1
+                    processing_settings.adjust(parameter, direction)
+                    logger.info("parâmetros PDI: %s", processing_settings.parameter_labels())
                 elif event.key in (pygame.K_PLUS, pygame.K_EQUALS, pygame.K_KP_PLUS):
                     speed = min(MAX_SPEED, speed + SPEED_STEP)
                     robot.set_speed(speed)
@@ -196,7 +257,7 @@ def main():
             if input_frame is not None:
                 started_at = time.perf_counter()
                 try:
-                    processed_frame = process_frame(input_frame)
+                    processed_frame = process_frame(input_frame, processing_settings)
                     if processed_frame is None:
                         raise ValueError("process_frame retornou none")
                 except Exception as exc:
@@ -232,7 +293,7 @@ def main():
             )
 
             draw_text(screen, "fonte", 20, 100, small_font)
-            draw_text(screen, source_description[:35], 20, 126, tiny_font)
+            draw_text(screen, source_description[:31], 20, 126, tiny_font)
             draw_text(
                 screen,
                 f"stream: {'ok' if source_status['opened'] else 'sem frame'}",
@@ -283,15 +344,22 @@ def main():
                 draw_text(screen, "erro no pipeline", 20, 684, small_font, color=(255, 120, 120))
                 draw_text(screen, processing_error[:32], 20, 710, tiny_font, color=(255, 120, 120))
 
-            if processed_frame is not None:
-                surface = CameraViewer.frame_to_surface(processed_frame, target_size=(960, 720))
-                if surface is not None:
-                    screen.blit(surface, (300, 40))
-                    draw_text(screen, "saída de pc_app/image_processing.py", 310, 766, tiny_font)
-            elif processing_error:
-                draw_text(screen, "pipeline de pdi indisponível", 500, 360, font, color=(255, 120, 120))
-            else:
-                draw_text(screen, "aguardando frame", 500, 360, font, color=(255, 210, 120))
+            original_image_rect = draw_frame_panel(
+                screen, input_frame, pygame.Rect(300, 92, 470, 390),
+                "ORIGINAL", small_font, tiny_font, "aguardando frame",
+            )
+            pdi_controls.draw_marker_roi(screen, processing_settings, original_image_rect)
+            processed_image_rect = draw_frame_panel(
+                screen, processed_frame, pygame.Rect(790, 92, 470, 390),
+                "MÁSCARA (BORDAS)" if processing_settings.mode == "marcadores" else "PROCESSADA",
+                small_font, tiny_font,
+                "erro no PDI" if processing_error else "aguardando frame",
+            )
+            pdi_controls.draw_marker_count(screen, processing_settings, processed_image_rect, tiny_font)
+
+            if video_timeline:
+                video_timeline.draw(screen, source, small_font)
+            pdi_controls.draw(screen, processing_settings, small_font, tiny_font)
 
             pygame.display.flip()
     finally:
