@@ -13,7 +13,7 @@ EXPLANATIONS = {
     "nenhum": "Sem filtro de ruído.",
     "sal_pimenta": "Mediana integral se há muitos pontos; seletiva se raros.",
     "listras": "Notch na FFT remove interferência periódica.",
-    "estatico": "NLM atua apenas em granulação difusa detectada.",
+    "estatico": "1 quadro: automático. Mais quadros: mantenha a câmera parada.",
 }
 
 
@@ -27,7 +27,8 @@ class PDIControls:
             mode: pygame.Rect(300 + index * 240, 608, 225, 38)
             for index, mode in enumerate(NOISE_MODES)
         }
-        self.slider_rects = (pygame.Rect(300, 670, 450, 56), pygame.Rect(790, 670, 450, 56))
+        self.slider_rects = tuple(pygame.Rect(300 + index * 320, 670, 300, 56)
+                                  for index in range(3))
         self.reset_rect = pygame.Rect(300, 737, 190, 39)
         self.mirror_rect = pygame.Rect(500, 737, 190, 39)
         self.dragging = None

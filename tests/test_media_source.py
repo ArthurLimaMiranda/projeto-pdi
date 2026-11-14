@@ -2,6 +2,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import cv2
 import numpy as np
@@ -11,6 +12,26 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "pc_app"))
 
 from media_source import MediaFileSource  # noqa: E402
+from camera_viewer import CameraViewer  # noqa: E402
+
+
+class CameraViewerTest(unittest.TestCase):
+    def test_snapshot_invalidates_previous_frame_on_reconnect(self):
+        with patch("camera_viewer.threading.Thread"):
+            source = CameraViewer("http://camera.test")
+        first = np.full((24, 32, 3), 10, dtype=np.uint8)
+        second = np.full_like(first, 20)
+        source._store_frame(first)
+        frame, sequence, revision = source.read_frame_snapshot()
+        np.testing.assert_array_equal(frame, first)
+        self.assertEqual((sequence, revision), (1, 0))
+        with self.assertLogs("camera_viewer", level="WARNING"):
+            source._register_connection_error(ConnectionError("teste"))
+        self.assertEqual(source.read_frame_snapshot(), (None, 1, 1))
+        source._store_frame(second)
+        frame, sequence, revision = source.read_frame_snapshot()
+        np.testing.assert_array_equal(frame, second)
+        self.assertEqual((sequence, revision), (2, 1))
 
 
 class MediaFileSourceTest(unittest.TestCase):
@@ -52,10 +73,15 @@ class MediaFileSourceTest(unittest.TestCase):
             self.assertTrue(source.get_status()["seekable"])
             self.assertAlmostEqual(source.get_status()["duration_sec"], 0.3, places=2)
             self.assertTrue(source.set_paused(True))
+            _, sequence, revision = source.read_frame_snapshot()
+            self.assertEqual(source.read_frame_snapshot()[1:], (sequence, revision))
             self.assertTrue(source.seek(0.2))
             self.assertTrue(source.get_status()["paused"])
             self.assertAlmostEqual(source.get_status()["position_sec"], 0.2, places=2)
-            self.assertGreater(source.read_frame().mean(), 130)
+            frame, new_sequence, new_revision = source.read_frame_snapshot()
+            self.assertGreater(frame.mean(), 130)
+            self.assertEqual(new_sequence, sequence + 1)
+            self.assertEqual(new_revision, revision + 1)
             source.release()
 
     def test_missing_source_is_rejected(self):
