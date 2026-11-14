@@ -77,6 +77,22 @@ class ImageProcessingBaselineTest(unittest.TestCase):
         self.assertLess(np.mean((result.astype(float) - clean) ** 2),
                         np.mean((noisy.astype(float) - clean) ** 2))
 
+    def test_static_filter_reduces_grain_below_previous_threshold(self):
+        clean = np.full((64, 64, 3), 110, dtype=np.uint8)
+        rng = np.random.default_rng(7)
+        grain = rng.normal(0, 5, (64, 64, 1)).round().astype(np.int16)
+        noisy = (clean + grain).astype(np.uint8)
+        result = process_frame(noisy, ProcessingSettings(noise_mode="estatico"))
+        self.assertLess(np.mean((result.astype(float) - clean) ** 2),
+                        np.mean((noisy.astype(float) - clean) ** 2) * 0.8)
+
+    def test_static_filter_averages_only_selected_recent_frames(self):
+        frames = tuple(np.full((64, 64, 3), level, dtype=np.uint8)
+                       for level in (220, 80, 120))
+        settings = ProcessingSettings(noise_mode="estatico", static_frames=2)
+        result = process_frame(frames[-1], settings, recent_frames=frames)
+        self.assertLess(np.max(np.abs(result.astype(int) - 100)), 3)
+
     def test_dense_salt_and_pepper_uses_full_median(self):
         clean = np.full((80, 80, 3), 100, dtype=np.uint8)
         rng = np.random.default_rng(12)

@@ -56,7 +56,22 @@ filtrava a imagem inteira. Agora ele aparece explicitamente como **Sal e
 pimenta** e adapta a mediana à densidade dos impulsos. **Ruído suave** era o nome dado ao filtro
 bilateral para perturbações pequenas; não é uma classe específica de ruído.
 Para a granulação estática do vídeo, o modo **Estático** usa Non-Local Means
-somente nos trechos em que a granulação foi detectada.
+com intensidade gradual por quadro. O percentil 75 do resíduo da mediana
+define a mistura: até 2, mantém o quadro de entrada; de 2 a 8, aumenta
+linearmente o peso da imagem filtrada; a partir de 8, usa todo o resultado
+do NLM. O filtro é ignorado se mais de 2,5% dos resíduos ultrapassarem 60,
+como pode ocorrer em quadros dominados por sal e pimenta.
+
+O controle **Quadros** vai de 1 a 15. Em 1 (padrão), vale a detecção
+automática acima. Ao escolher 2 ou mais, o operador solicita a média dos
+quadros mais recentes seguida de NLM, inclusive quando o ruído forte
+acionaria o bloqueio automático. Use esse ajuste com a câmera parada.
+A média pode borrar contornos se houver movimento. Com o robô, segure
+**Espaço** para enviar o comando de parada e acumular novos quadros.
+Ao soltar a tecla, o console descarta o histórico e volta a processar
+o quadro atual. Após um salto no vídeo local,
+deixe a reprodução avançar até o contador de quadros atingir o valor
+selecionado antes de pausar.
 
 ## Vídeo de demonstração
 

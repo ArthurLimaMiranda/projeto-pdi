@@ -1,5 +1,6 @@
 import logging
 import time
+from collections import deque
 
 import pygame
 
@@ -34,6 +35,7 @@ from config import (
 )
 from gateway_client import GatewayRobotClient
 from image_processing import (
+    MAX_STATIC_FRAMES,
     MODE_NAMES,
     MODES,
     NOISE_NAMES,
@@ -190,6 +192,11 @@ def main():
     processing_ms = 0.0
     last_processing_log = 0.0
     processing_settings = ProcessingSettings()
+    recent_frames = deque(maxlen=MAX_STATIC_FRAMES)
+    last_frame_number = None
+    last_stream_revision = None
+    processing_key = None
+    processed_frame = None
     pdi_controls = PDIControls()
     video_timeline = VideoTimeline() if RUN_MODE == "video" else None
     mode_keys = {pygame.K_0 + index: mode for index, mode in enumerate(MODES)}
@@ -250,17 +257,44 @@ def main():
                     robot.set_flash(FLASH_ON_VALUE if flash_enabled else FLASH_OFF_VALUE)
                     logger.info("flash: %s", "on" if flash_enabled else "off")
 
-            input_frame = source.read_frame()
-            processed_frame = None
-            processing_error = None
+            keys = pygame.key.get_pressed()
+            holding_stop = keys[pygame.K_SPACE]
+            command = get_manual_command(keys) if control_enabled and not holding_stop else "stop"
+            if command == "stop":
+                send_robot_command(robot, command)
 
-            if input_frame is not None:
+            input_frame, frame_number, stream_revision = source.read_frame_snapshot()
+            accumulate = (not control_enabled or holding_stop) and (
+                processing_settings.noise_mode == "estatico"
+                and processing_settings.static_frames > 1
+            )
+            if (not accumulate or input_frame is None or stream_revision != last_stream_revision
+                    or (recent_frames and recent_frames[-1].shape != input_frame.shape)):
+                recent_frames.clear()
+            if accumulate and input_frame is not None and frame_number != last_frame_number:
+                recent_frames.append(input_frame)
+            last_frame_number = frame_number
+            last_stream_revision = stream_revision
+            settings_key = tuple(value for name, value in vars(processing_settings).items()
+                                 if name not in ("focus", "marked_objects"))
+            key = (stream_revision, frame_number, len(recent_frames), settings_key)
+            if input_frame is None:
+                processing_key = None
+                processed_frame = None
+                processing_error = None
+
+            if input_frame is not None and key != processing_key:
                 started_at = time.perf_counter()
+                processed_frame = None
+                processing_error = None
                 try:
-                    processed_frame = process_frame(input_frame, processing_settings)
+                    processed_frame = process_frame(input_frame, processing_settings,
+                                                    recent_frames=tuple(recent_frames))
                     if processed_frame is None:
                         raise ValueError("process_frame retornou none")
+                    processing_key = key
                 except Exception as exc:
+                    processing_key = None
                     processing_error = str(exc)
                     now = time.monotonic()
                     if now - last_processing_log >= 2.0:
@@ -269,14 +303,10 @@ def main():
                 finally:
                     processing_ms = (time.perf_counter() - started_at) * 1000.0
 
-            keys = pygame.key.get_pressed()
-            command = get_manual_command(keys) if control_enabled else "stop"
-
-            # quando existe robô, ausência de referência visual sempre força parada.
-            if keys[pygame.K_SPACE] or processed_frame is None:
-                command = "stop"
-
-            send_robot_command(robot, command)
+            if command != "stop":
+                if processed_frame is None:
+                    command = "stop"
+                send_robot_command(robot, command)
 
             robot_status = robot.get_status()
             source_status = source.get_status()
@@ -304,6 +334,12 @@ def main():
             draw_text(screen, f"frames: {source_status['frames_received']}", 20, 170, tiny_font)
             draw_text(screen, f"reconexões: {source_status['reconnects']}", 20, 192, tiny_font)
             draw_text(screen, f"pipeline: {processing_ms:.1f} ms", 20, 214, tiny_font)
+            if processing_settings.noise_mode == "estatico" and processing_settings.static_frames > 1:
+                target = processing_settings.static_frames
+                capture_label = (f"quadros NLM: {min(len(recent_frames), target)}/{target}"
+                                 if accumulate else "segure ESPAÇO para acumular")
+                draw_text(screen, capture_label,
+                          20, 236, tiny_font)
 
             draw_text(screen, "controle", 20, 258, small_font)
             draw_text(screen, control_description[:35], 20, 284, tiny_font)

@@ -84,6 +84,9 @@ class CameraViewer:
                         break
                     self._store_frame(frame)
 
+            if self.running:
+                self._register_connection_error(EOFError("stream encerrado"))
+
     def _extract_frame_from_buffer(self, buffer):
         header_end = buffer.find(b"\r\n\r\n")
 
@@ -142,8 +145,10 @@ class CameraViewer:
             self.frames_received += 1
 
     def _register_connection_error(self, exc):
-        self.connection_errors += 1
-        self.reconnects += 1
+        with self.lock:
+            self.connection_errors += 1
+            self.reconnects += 1
+            self.latest_frame = None
 
         now = time.monotonic()
         if now - self._last_connection_log >= 2.0:
@@ -158,12 +163,16 @@ class CameraViewer:
         return age <= self.max_frame_age_sec
 
     def read_frame(self):
+        return self.read_frame_snapshot()[0]
+
+    def read_frame_snapshot(self):
+        """Lê o quadro e sua identidade sob o mesmo lock."""
         with self.lock:
-            if self.latest_frame is None:
-                return None
-            if time.time() - self.latest_frame_time > self.max_frame_age_sec:
-                return None
-            return self.latest_frame.copy()
+            frame = None
+            if (self.latest_frame is not None
+                    and time.time() - self.latest_frame_time <= self.max_frame_age_sec):
+                frame = self.latest_frame.copy()
+            return frame, self.frames_received, self.reconnects
 
     @staticmethod
     def frame_to_surface(frame, target_size=None):

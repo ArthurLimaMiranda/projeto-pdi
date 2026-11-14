@@ -26,6 +26,7 @@ class MediaFileSource:
             raise FileNotFoundError(f"arquivo de mídia não encontrado: {self.path}")
 
         self.frames_received = 0
+        self.timeline_revision = 0
         self.reconnects = 0
         self.decode_errors = 0
         self.connection_errors = 0
@@ -82,6 +83,7 @@ class MediaFileSource:
                 return
 
             self._capture.set(cv2.CAP_PROP_POS_FRAMES, 0)
+            self.timeline_revision += 1
             ok, frame = self._capture.read()
 
         if not ok or frame is None:
@@ -112,6 +114,7 @@ class MediaFileSource:
         )
         if not self._capture.set(cv2.CAP_PROP_POS_FRAMES, frame_index):
             return False
+        self.timeline_revision += 1
         ok, frame = self._capture.read()
         if not ok or frame is None:
             self.decode_errors += 1
@@ -136,9 +139,14 @@ class MediaFileSource:
             return None
         return self.latest_frame.copy()
 
+    def read_frame_snapshot(self):
+        frame = self.read_frame()
+        return frame, self.frames_received, self.timeline_revision
+
     def get_status(self):
         return {
             "frames_received": self.frames_received,
+            "timeline_revision": self.timeline_revision,
             "decode_errors": self.decode_errors,
             "connection_errors": self.connection_errors,
             "reconnects": self.reconnects,

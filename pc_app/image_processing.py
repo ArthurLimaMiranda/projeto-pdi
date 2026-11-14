@@ -1,7 +1,7 @@
 """PDI clássico: remoção opcional de ruído seguida de realce da cena.
 
 O operador escolhe as duas camadas. O computador não interpreta a cena nem
-controla os motores. Todos os filtros recebem somente o frame atual.
+controla os motores. O modo Estático pode receber quadros recentes.
 """
 
 from dataclasses import dataclass, field
@@ -36,15 +36,17 @@ NOISE_PARAMETER_SPECS = {
     "nenhum": (),
     "sal_pimenta": (("median_kernel", 3, 7, 2), ("impulse_threshold", 20, 100, 5)),
     "listras": (("notch_radius", 2, 10, 1), ("notch_pairs", 1, 4, 1)),
-    "estatico": (("static_strength", 4, 25, 1), ("static_search", 7, 15, 2)),
+    "estatico": (("static_strength", 4, 25, 1), ("static_search", 7, 15, 2),
+                 ("static_frames", 1, 15, 1)),
 }
+MAX_STATIC_FRAMES = NOISE_PARAMETER_SPECS["estatico"][2][2]
 
 
 @dataclass
 class ProcessingSettings:
     mode: str = "original"
     noise_mode: str = "nenhum"
-    focus: str = "base"  # camada cujo par de controles deslizantes está visível
+    focus: str = "base"  # camada cujos controles deslizantes estão visíveis
     gamma: float = 0.60
     clahe_clip: float = 2.0
     contrast_clip: float = 2.0
@@ -55,6 +57,7 @@ class ProcessingSettings:
     notch_pairs: int = 3
     static_strength: int = 10
     static_search: int = 7
+    static_frames: int = 1
     marker_threshold: int = 25
     marker_min_area: int = 18
     marker_roi: tuple[float, float, float, float] = (0.17, 0.35, 0.92, 0.89)
@@ -113,7 +116,9 @@ class ProcessingSettings:
             if self.noise_mode == "listras":
                 return (f"raio notch: {self.notch_radius}", f"pares de picos: {self.notch_pairs}")
             if self.noise_mode == "estatico":
-                return (f"forca NLM: {self.static_strength}", f"busca: {self.static_search}x{self.static_search}")
+                return (f"força NLM: {self.static_strength}",
+                        f"busca: {self.static_search}x{self.static_search}",
+                        f"quadros: {self.static_frames}")
         return ("sem parametros", "")
 
 
@@ -184,9 +189,13 @@ def remove_static_noise(frame, strength=10, search=7):
     residual = cv2.absdiff(gray, cv2.medianBlur(gray, 5))
     # Q75 distingue granulação espalhada de cenas limpas. A cauda acima de
     # 60 distingue sal e pimenta, para o qual NLM deixa pontos e cria halos.
-    if np.percentile(residual, 75) < 8 or np.mean(residual > 60) > 0.025:
+    grain = np.percentile(residual, 75)
+    if grain <= 2 or np.mean(residual > 60) > 0.025:
         return frame.copy()
-    return cv2.fastNlMeansDenoisingColored(frame, None, strength, strength, 7, search)
+    filtered = cv2.fastNlMeansDenoisingColored(frame, None, strength, strength, 7, search)
+    # A transição gradual evita saltos de suavização perto do limiar.
+    weight = min(1.0, (grain - 2) / 6)
+    return cv2.addWeighted(filtered, weight, frame, 1 - weight, 0)
 
 
 def segment_marker_edges(frame, threshold=25, min_area=18,
@@ -215,8 +224,8 @@ def segment_marker_edges(frame, threshold=25, min_area=18,
     return cv2.cvtColor(clean, cv2.COLOR_GRAY2BGR)
 
 
-def process_frame(frame_bgr, settings=None):
-    """Recebe BGR e devolve BGR: ruído -> realce -> espelhamento opcional."""
+def process_frame(frame_bgr, settings=None, *, recent_frames=()):
+    """Processa BGR. recent_frames contém quadros em ordem temporal, incluindo o atual."""
     if frame_bgr is None:
         return None
     if frame_bgr.ndim != 3 or frame_bgr.shape[2] != 3 or frame_bgr.dtype != np.uint8:
@@ -231,7 +240,15 @@ def process_frame(frame_bgr, settings=None):
     elif settings.noise_mode == "listras":
         result = remove_periodic_noise(frame_bgr, settings.notch_radius, settings.notch_pairs)
     elif settings.noise_mode == "estatico":
-        result = remove_static_noise(frame_bgr, settings.static_strength, settings.static_search)
+        if settings.static_frames > 1 and len(recent_frames) > 1:
+            frames = recent_frames[-settings.static_frames:]
+            averaged = np.rint(np.mean(frames, axis=0, dtype=np.float32)).astype(np.uint8)
+            strength = settings.static_strength
+            result = cv2.fastNlMeansDenoisingColored(
+                averaged, None, strength, strength + 4, 7, settings.static_search
+            )
+        else:
+            result = remove_static_noise(frame_bgr, settings.static_strength, settings.static_search)
     else:
         result = frame_bgr.copy()
 
